@@ -1,0 +1,144 @@
+#include <Arduino.h>
+#include <TFT_eSPI.h>
+#include <TinyGPSPlus.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+static constexpr int GPS_RX = 16;   // ESP32 RX2 (к нему идёт TX GPS)
+static constexpr int GPS_TX = 17;   // ESP32 TX2 (к нему идёт RX GPS)
+static constexpr int WATER_TEMP_PIN = 25; // DS18B20 DQ
+
+TFT_eSPI tft;
+TinyGPSPlus gps;
+OneWire oneWire(WATER_TEMP_PIN);
+DallasTemperature waterTemp(&oneWire);
+
+unsigned long lastUiMs = 0;
+unsigned long lastGpsByteMs = 0;
+unsigned long totalGpsBytes = 0;
+unsigned long lastTempMs = 0;
+float lastTempC = NAN;
+bool tempSensorOk = false;
+uint8_t tempReadFailStreak = 0;
+
+// аккуратная перерисовка строки
+static void printLine(int y, const String& s) {
+  tft.fillRect(0, y, tft.width(), 11, TFT_BLACK);
+  tft.setCursor(0, y);
+  tft.print(s);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // GPS (обычно 9600 по умолчанию)
+  Serial2.begin(9600, SERIAL_8N1, GPS_RX, GPS_TX);
+
+  // TFT
+  tft.init();
+  tft.setRotation(1); // если хочешь портрет — поставь 0 или 2
+
+#ifdef TFT_BL
+  pinMode(TFT_BL, OUTPUT);
+  #ifdef TFT_BACKLIGHT_ON
+  digitalWrite(TFT_BL, TFT_BACKLIGHT_ON);
+  #else
+  digitalWrite(TFT_BL, HIGH);
+  #endif
+#endif
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.setTextSize(1);
+
+  waterTemp.begin();
+  tempSensorOk = (waterTemp.getDeviceCount() > 0);
+
+  printLine(0,  "GPS");
+  printLine(12, "Shirota: --");
+  printLine(24, "Dolgota: --");
+  printLine(36, "Status: boot...");
+  printLine(48, "Sat: --  HDOP: --");
+  printLine(60, "UTC: --:--:--");
+  printLine(72, "Bytes: 0");
+  printLine(84, "Temp: --.- C");
+
+}
+
+void loop() {
+  // 1) постоянно парсим GPS
+  while (Serial2.available()) {
+    const char c = (char)Serial2.read();
+    totalGpsBytes++;
+    lastGpsByteMs = millis();
+    gps.encode(c);
+  }
+
+  // 2) обновляем экран периодически
+  const unsigned long now = millis();
+  if (now - lastUiMs < 200) return;
+  lastUiMs = now;
+
+  if (now - lastTempMs >= 1500) {
+    lastTempMs = now;
+    waterTemp.requestTemperatures();
+    const float t = waterTemp.getTempCByIndex(0);
+    if (t != DEVICE_DISCONNECTED_C && t > -55.0f && t < 125.0f) {
+      lastTempC = t;
+      tempSensorOk = true;
+      tempReadFailStreak = 0;
+    } else {
+      if (tempReadFailStreak < 255) tempReadFailStreak++;
+      if (tempReadFailStreak >= 3) {
+        tempSensorOk = false;
+      }
+    }
+  }
+
+  const bool hasFix = gps.location.isValid() && gps.location.age() < 3000;
+  const bool hasData = (totalGpsBytes > 0) && ((now - lastGpsByteMs) < 3000);
+
+  if (hasFix) {
+    char latBuf[40];
+    char lonBuf[40];
+    snprintf(latBuf, sizeof(latBuf), "Shirota: %.6f", gps.location.lat());
+    snprintf(lonBuf, sizeof(lonBuf), "Dolgota: %.6f", gps.location.lng());
+    printLine(12, String(latBuf));
+    printLine(24, String(lonBuf));
+    printLine(36, "Status: FIX");
+  } else {
+    printLine(12, "Shirota: --");
+    printLine(24, "Dolgota: --");
+    printLine(36, hasData ? "Status: DATA NO FIX" : "Status: NO DATA");
+  }
+
+  if (gps.satellites.isValid() && gps.hdop.isValid()) {
+    printLine(48, "Sat: " + String(gps.satellites.value()) +
+                  "  HDOP: " + String(gps.hdop.hdop(), 1));
+  } else if (gps.satellites.isValid()) {
+    printLine(48, "Sat: " + String(gps.satellites.value()) + "  HDOP: --");
+  } else {
+    printLine(48, "Sat: --  HDOP: --");
+  }
+
+  if (gps.time.isValid()) {
+    char timeBuf[32];
+    snprintf(timeBuf, sizeof(timeBuf), "UTC: %02d:%02d:%02d",
+             gps.time.hour(), gps.time.minute(), gps.time.second());
+    printLine(60, String(timeBuf));
+  } else {
+    printLine(60, "UTC: --:--:--");
+  }
+
+  printLine(72, "Bytes: " + String(totalGpsBytes));
+
+  if (!tempSensorOk) {
+    printLine(84, "Temp: SENSOR N/A");
+  } else if (isnan(lastTempC)) {
+    printLine(84, "Temp: reading...");
+  } else {
+    char tempBuf[32];
+    snprintf(tempBuf, sizeof(tempBuf), "Temp: %.1f C", lastTempC);
+    printLine(84, String(tempBuf));
+  }
+}
