@@ -3,95 +3,78 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EcoLog — Снимки проб</title>
+    <title>EcoLog WebApp</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="bg-shape bg-shape-a"></div>
-    <div class="bg-shape bg-shape-b"></div>
-
-    <header class="topbar">
-      <div>
-        <h1>Снимки проб</h1>
-        <p>Просмотр, поиск и редактирование записей для печати и архива</p>
-      </div>
-      <div class="actions">
-        <label class="btn btn-secondary file-btn">
-          Импорт CSV
-          <input id="importCsv" type="file" accept=".csv,text/csv" />
-        </label>
-        <button id="exportCsv" class="btn btn-secondary">Экспорт CSV</button>
-        <button id="loadDevice" class="btn btn-secondary">Загрузить с устройства</button>
-        <button id="saveDevice" class="btn btn-secondary">Сохранить на устройство</button>
-        <button id="addSnapshot" class="btn btn-primary">+ Новая запись</button>
-      </div>
-    </header>
-    <div id="statusBar" class="status-bar">Готово</div>
-
-    <main class="layout">
-      <section class="panel list-panel">
-        <div class="list-tools">
-          <input id="searchInput" type="search" placeholder="Поиск по ID, времени, координатам" />
-          <span id="counter" class="counter"></span>
-        </div>
-        <div id="snapshotList" class="snapshot-list"></div>
+    <div class="backdrop"></div>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">EcoLog Wi-Fi Viewer</p>
+        <h1>Список записей с SD-карты ESP</h1>
+        <p class="lead">
+          Подключитесь к сети устройства, укажите адрес ESP и загрузите сохраненные записи.
+        </p>
       </section>
 
-      <section class="panel edit-panel">
-        <h2>Карточка снимка</h2>
-        <form id="editForm" class="edit-form">
+      <section class="panel controls">
+        <div class="control-grid">
           <label>
-            ID
-            <input id="f_id" required maxlength="5" pattern="[A-Z0-9]{5}" />
+            Адрес ESP
+            <input id="deviceUrl" type="text" placeholder="http://192.168.4.1" />
           </label>
           <label>
-            Время (timestamp)
-            <input id="f_timestamp" placeholder="YYYYMMDDhhmmss" required />
-          </label>
-          <div class="row-2">
-            <label>
-              Широта
-              <input id="f_lat" type="number" step="0.000001" />
-            </label>
-            <label>
-              Долгота
-              <input id="f_lon" type="number" step="0.000001" />
-            </label>
-          </div>
-          <label>
-            Температура (°C)
-            <input id="f_temp_c" type="number" step="0.1" />
-          </label>
-          <div class="row-2 checks">
-            <label class="check"><input id="f_fix_valid" type="checkbox" /> GPS фикс валиден</label>
-            <label class="check"><input id="f_temp_valid" type="checkbox" /> Температура валидна</label>
-          </div>
-          <label>
-            captured_ms
-            <input id="f_captured_ms" type="number" min="0" />
+            SSID
+            <input id="ssid" type="text" value="EcoLog-Device" readonly />
           </label>
           <label>
-            Комментарий
-            <textarea id="f_note" rows="3" placeholder="Например: берег, точка №3"></textarea>
+            Пароль
+            <input id="password" type="text" value="ecolog123" readonly />
           </label>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Сохранить</button>
-            <button type="button" id="deleteSnapshot" class="btn btn-danger">Удалить</button>
-          </div>
-        </form>
+        </div>
+        <div class="actions">
+          <button id="connectBtn" class="btn btn-secondary">Проверить связь</button>
+          <button id="refreshBtn" class="btn btn-primary">Загрузить записи</button>
+        </div>
+        <div id="status" class="status">Ожидание подключения</div>
+      </section>
+
+      <section class="metrics">
+        <article class="metric-card">
+          <span>Записей</span>
+          <strong id="recordsCount">0</strong>
+        </article>
+        <article class="metric-card">
+          <span>Последняя запись</span>
+          <strong id="latestRecord">-</strong>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="list-head">
+          <h2>Записи</h2>
+          <input id="searchInput" type="search" placeholder="Поиск по ID, времени, координатам, заметке" />
+        </div>
+        <div id="recordsList" class="records-list"></div>
       </section>
     </main>
 
-    <template id="itemTemplate">
-      <article class="snapshot-item">
-        <div class="item-head">
-          <strong class="item-id"></strong>
-          <span class="item-time"></span>
+    <template id="recordTemplate">
+      <article class="record-card">
+        <div class="record-top">
+          <strong class="record-id"></strong>
+          <span class="record-time"></span>
         </div>
-        <div class="item-meta"></div>
+        <div class="record-grid">
+          <div><span>Координаты</span><strong class="record-coords"></strong></div>
+          <div><span>Температура</span><strong class="record-temp"></strong></div>
+          <div><span>GPS</span><strong class="record-fix"></strong></div>
+          <div><span>captured_ms</span><strong class="record-ms"></strong></div>
+        </div>
+        <p class="record-note"></p>
       </article>
     </template>
 

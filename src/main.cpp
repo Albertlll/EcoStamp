@@ -102,6 +102,54 @@ static String contentTypeFor(const String& path) {
   return "text/plain; charset=utf-8";
 }
 
+static String jsonEscape(const String& value) {
+  String out;
+  out.reserve(value.length() + 8);
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    switch (c) {
+      case '\\': out += "\\\\"; break;
+      case '\"': out += "\\\""; break;
+      case '\b': out += "\\b"; break;
+      case '\f': out += "\\f"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if ((uint8_t)c < 0x20) {
+          out += ' ';
+        } else {
+          out += c;
+        }
+        break;
+    }
+  }
+  return out;
+}
+
+static bool csvColumn(const String& line, int index, String& out) {
+  int start = 0;
+  int current = 0;
+  while (current < index) {
+    const int comma = line.indexOf(',', start);
+    if (comma < 0) {
+      out = "";
+      return false;
+    }
+    start = comma + 1;
+    current++;
+  }
+
+  if (index == 8) {
+    out = line.substring(start);
+  } else {
+    const int comma = line.indexOf(',', start);
+    out = (comma < 0) ? line.substring(start) : line.substring(start, comma);
+  }
+  out.trim();
+  return true;
+}
+
 static bool streamFromSd(const String& path) {
   if (!initSd()) {
     server.send(500, "text/plain", "SD init failed");
@@ -182,6 +230,100 @@ static void handlePostSamplesCsv() {
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
+static void handleStatus() {
+  String json = "{\"ok\":true,\"ssid\":\"";
+  json += jsonEscape(AP_SSID);
+  json += "\",\"ip\":\"";
+  json += WiFi.softAPIP().toString();
+  json += "\",\"sd_ready\":";
+  json += initSd() ? "true" : "false";
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
+static void handleGetRecords() {
+  if (!initSd()) {
+    server.send(500, "application/json", "{\"ok\":false,\"error\":\"SD init failed\"}");
+    return;
+  }
+
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+  WiFiClient client = server.client();
+
+  client.print("{\"ok\":true,\"records\":[");
+  if (SD.exists("/samples.csv")) {
+    File f = SD.open("/samples.csv", FILE_READ);
+    if (!f) {
+      client.print("],\"error\":\"Read failed\"}");
+      return;
+    }
+
+    bool first = true;
+    bool headerSkipped = false;
+    while (f.available()) {
+      String line = f.readStringUntil('\n');
+      line.trim();
+      if (line.isEmpty()) {
+        continue;
+      }
+      if (!headerSkipped) {
+        headerSkipped = true;
+        if (line.startsWith("id,")) {
+          continue;
+        }
+      }
+
+      String id;
+      String timestamp;
+      String lat;
+      String lon;
+      String tempC;
+      String fixValid;
+      String tempValid;
+      String capturedMs;
+      String note;
+      csvColumn(line, 0, id);
+      csvColumn(line, 1, timestamp);
+      csvColumn(line, 2, lat);
+      csvColumn(line, 3, lon);
+      csvColumn(line, 4, tempC);
+      csvColumn(line, 5, fixValid);
+      csvColumn(line, 6, tempValid);
+      csvColumn(line, 7, capturedMs);
+      csvColumn(line, 8, note);
+
+      if (!first) {
+        client.print(',');
+      }
+      first = false;
+
+      client.print("{\"id\":\"");
+      client.print(jsonEscape(id));
+      client.print("\",\"timestamp\":\"");
+      client.print(jsonEscape(timestamp));
+      client.print("\",\"lat\":");
+      client.print(lat.length() ? lat : "0");
+      client.print(",\"lon\":");
+      client.print(lon.length() ? lon : "0");
+      client.print(",\"temp_c\":");
+      client.print(tempC.length() ? tempC : "0");
+      client.print(",\"fix_valid\":");
+      client.print(fixValid.length() ? fixValid : "0");
+      client.print(",\"temp_valid\":");
+      client.print(tempValid.length() ? tempValid : "0");
+      client.print(",\"captured_ms\":");
+      client.print(capturedMs.length() ? capturedMs : "0");
+      client.print(",\"note\":\"");
+      client.print(jsonEscape(note));
+      client.print("\"}");
+    }
+    f.close();
+  }
+
+  client.print("]}");
+}
+
 static void startWebServer() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASS);
@@ -200,6 +342,8 @@ static void startWebServer() {
   });
   server.on("/samples.csv", HTTP_GET, handleGetSamplesCsv);
   server.on("/samples.csv", HTTP_POST, handlePostSamplesCsv);
+  server.on("/api/status", HTTP_GET, handleStatus);
+  server.on("/api/records", HTTP_GET, handleGetRecords);
   server.onNotFound(handleStaticFiles);
   server.begin();
   Serial.println("Web server started");
@@ -239,14 +383,11 @@ static void onSampleButtonPressed(uint32_t nowMs) {
   const bool hasTemp = tempSensorOk && !isnan(lastTempC);
   const float tempC = hasTemp ? lastTempC : 0.0f;
 
-  snprintf(qr, sizeof(qr), "ECO|%s|%s|%u|%.5f|%.5f|%u|%.1f",
-           id, ts, hasFix ? 1 : 0, lat, lon, hasTemp ? 1 : 0, tempC);
-
   const bool saved = appendSnapshotToSd(id, ts, lat, lon, tempC, hasFix, hasTemp, nowMs);
   Serial.printf("Snapshot SD %s: %s\n", saved ? "saved" : "not_saved", id);
 
   Serial.printf("Sample press: %s\n", id);
-  printerModulePrint(qr, id);
+  printerModulePrintSnapshot(id, ts, lat, lon, tempC, hasFix, hasTemp);
 }
 
 static void handleButton(uint32_t nowMs) {
