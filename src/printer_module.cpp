@@ -36,23 +36,6 @@ ecohack::PrinterConfig makePrinterConfig() {
 }
 
 ecohack::BleLabelPrinter g_printer(makePrinterConfig());
-bool g_wasConnected = false;
-
-void calibrateOnConnect() {
-  if (!g_printer.connected()) {
-    g_wasConnected = false;
-    return;
-  }
-
-  if (g_wasConnected) {
-    return;
-  }
-
-  g_wasConnected = true;
-  Serial.println("Printer connected, calibrating...");
-  const bool ok = g_printer.calibrate();
-  Serial.printf("Calibration %s\n", ok ? "ok" : "failed");
-}
 
 }  // namespace
 
@@ -61,7 +44,6 @@ void printerModuleInit() {
   Serial.println("Connecting printer...");
   const bool connected = g_printer.begin();
   Serial.printf("Printer %s\n", connected ? "connected" : "not connected");
-  calibrateOnConnect();
 }
 
 bool printerModulePrint(const char* qrText, const char* idText) {
@@ -124,11 +106,20 @@ bool printerModulePrintSnapshot(
   return ok;
 }
 
+bool printerModuleCalibrate() {
+  if (g_printer.busy()) {
+    Serial.println("Calibration skipped: printer busy");
+    return false;
+  }
+  const bool ok = g_printer.calibrate();
+  Serial.printf("Calibration %s\n", ok ? "ok" : "failed");
+  return ok;
+}
+
 bool printerModuleIsBusy() {
   return g_printer.busy();
 }
 
 void printerModuleTick() {
   g_printer.tick();
-  calibrateOnConnect();
 }

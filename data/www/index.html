@@ -1,83 +1,1444 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EcoLog WebApp</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <div class="backdrop"></div>
-    <main class="page">
-      <section class="hero">
-        <p class="eyebrow">EcoLog Wi-Fi Viewer</p>
-        <h1>Список записей с SD-карты ESP</h1>
-        <p class="lead">
-          Подключитесь к сети устройства, укажите адрес ESP и загрузите сохраненные записи.
-        </p>
-      </section>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Экохак</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
-      <section class="panel controls">
-        <div class="control-grid">
-          <label>
-            Адрес ESP
-            <input id="deviceUrl" type="text" placeholder="http://192.168.4.1" />
-          </label>
-          <label>
-            SSID
-            <input id="ssid" type="text" value="EcoLog-Device" readonly />
-          </label>
-          <label>
-            Пароль
-            <input id="password" type="text" value="ecolog123" readonly />
-          </label>
-        </div>
-        <div class="actions">
-          <button id="connectBtn" class="btn btn-secondary">Проверить связь</button>
-          <button id="refreshBtn" class="btn btn-primary">Загрузить записи</button>
-        </div>
-        <div id="status" class="status">Ожидание подключения</div>
-      </section>
+:root {
+  --bg: #edf2f7;
+  --surface: #ffffff;
+  --surface2: #f7fafc;
+  --primary: #1a6ef5;
+  --primary-dark: #1558d6;
+  --primary-light: #eff5ff;
+  --text: #1a202c;
+  --text-muted: #718096;
+  --text-light: #a0aec0;
+  --border: #e2e8f0;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 100px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+  --font: 'IBM Plex Mono', 'Courier New', Consolas, monospace;
+}
 
-      <section class="metrics">
-        <article class="metric-card">
-          <span>Записей</span>
-          <strong id="recordsCount">0</strong>
-        </article>
-        <article class="metric-card">
-          <span>Последняя запись</span>
-          <strong id="latestRecord">-</strong>
-        </article>
-      </section>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
-      <section class="panel">
-        <div class="list-head">
-          <h2>Записи</h2>
-          <input id="searchInput" type="search" placeholder="Поиск по ID, времени, координатам, заметке" />
-        </div>
-        <div id="recordsList" class="records-list"></div>
-      </section>
-    </main>
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  font-size: 15px;
+  line-height: 1.5;
+  overscroll-behavior: none;
+}
 
-    <template id="recordTemplate">
-      <article class="record-card">
-        <div class="record-top">
-          <strong class="record-id"></strong>
-          <span class="record-time"></span>
-        </div>
-        <div class="record-grid">
-          <div><span>Координаты</span><strong class="record-coords"></strong></div>
-          <div><span>Температура</span><strong class="record-temp"></strong></div>
-          <div><span>GPS</span><strong class="record-fix"></strong></div>
-          <div><span>captured_ms</span><strong class="record-ms"></strong></div>
-        </div>
-        <p class="record-note"></p>
-      </article>
-    </template>
+.app-shell {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  background: var(--bg);
+  position: relative;
+  overflow-x: hidden;
+}
 
-    <script src="app.js"></script>
-  </body>
+@media(min-width: 900px) {
+  body { background: #c8d5e8; display: flex; align-items: flex-start; justify-content: center; }
+  .app-shell { box-shadow: 0 0 60px rgba(0,0,0,0.18); min-height: 100vh; }
+}
+
+/* ===== HEADER ===== */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  cursor: default;
+  user-select: none;
+}
+
+.logo-mark {
+  width: 34px;
+  height: 34px;
+  background: var(--primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 20px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  font-style: italic;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-icon-btn {
+  width: 36px;
+  height: 36px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+.settings-icon-btn:hover { background: var(--border); }
+
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+.status-dot.off { background: var(--error); }
+
+.back-btn {
+  width: 40px;
+  height: 40px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: -8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  transition: background 0.15s;
+}
+.back-btn:hover { background: var(--border); }
+.back-btn svg { width: 22px; height: 22px; }
+
+/* ===== SEARCH ROW ===== */
+.search-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+  position: relative;
+}
+
+.search-wrap {
+  flex: 1;
+  position: relative;
+}
+
+.search-input {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 15px;
+  background: var(--surface);
+  outline: none;
+  color: var(--text);
+  transition: border-color 0.15s;
+  -webkit-appearance: none;
+}
+.search-input::placeholder { color: var(--text-light); }
+.search-input:focus { border-color: var(--primary); }
+
+.filter-btn {
+  width: 46px;
+  height: 46px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.filter-btn.active { background: var(--primary-light); border-color: var(--primary); }
+
+/* ===== DATE GROUPS ===== */
+.samples-list { padding-bottom: 32px; }
+
+.date-group { margin-bottom: 4px; }
+
+.date-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 16px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.date-chevron {
+  color: var(--text-light);
+  transition: transform 0.2s ease;
+  display: inline-flex;
+}
+.date-header.collapsed .date-chevron { transform: rotate(-90deg); }
+
+.date-count {
+  background: var(--border);
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.date-csv-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 2px 9px;
+  font-family: var(--font);
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-muted);
+  margin-left: 4px;
+  transition: all 0.15s;
+}
+.date-csv-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+.date-items { overflow: hidden; }
+
+/* ===== SAMPLE CARD ===== */
+.sample-card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: 13px 15px;
+  margin: 0 16px 8px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: box-shadow 0.15s, transform 0.1s;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.sample-card:hover { box-shadow: var(--shadow-md); }
+.sample-card:active { transform: scale(0.99); }
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 11px;
+}
+
+.id-badge {
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px 13px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.card-edit-btn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 6px 15px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  min-height: 32px;
+  transition: background 0.15s;
+}
+.card-edit-btn:hover { background: var(--primary-dark); }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 4px;
+}
+
+.card-cell label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.card-cell .val {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.card-cell.right { text-align: right; }
+
+/* ===== EMPTY STATE ===== */
+.empty-state {
+  text-align: center;
+  padding: 64px 24px 32px;
+  color: var(--text-muted);
+}
+.empty-icon { font-size: 44px; margin-bottom: 14px; }
+.empty-title { font-size: 15px; margin-bottom: 6px; }
+.empty-sub { font-size: 13px; color: var(--text-light); }
+
+/* ===== SCREENS ===== */
+.screen { display: none; animation: fadeIn 0.18s ease; }
+.screen.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ===== CARD DETAIL SCREEN ===== */
+.field-block {
+  padding: 0 16px 10px;
+}
+.field-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+.field-val {
+  width: 100%;
+  padding: 13px 15px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 15px;
+  background: var(--surface2);
+  color: var(--text);
+}
+.field-input {
+  width: 100%;
+  padding: 13px 15px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 15px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+  -webkit-appearance: none;
+}
+.field-input:focus { border-color: var(--primary); }
+.field-input.warn { border-color: var(--warning); background: #fffbeb; }
+.field-input.warn:focus { border-color: var(--warning); }
+
+textarea.field-input {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.warn-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--warning);
+  margin-top: 5px;
+  padding: 0 2px;
+}
+
+.id-top-display {
+  margin: 4px 16px 14px;
+  padding: 12px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  font-size: 16px;
+  font-weight: 600;
+  background: var(--surface);
+  letter-spacing: 0.02em;
+}
+
+.qr-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 10px 16px 14px;
+}
+.qr-wrap img {
+  width: 160px;
+  height: 160px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: #fff;
+  display: block;
+}
+.qr-placeholder {
+  width: 160px;
+  height: 160px;
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-light);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ===== BOTTOM ACTIONS ===== */
+.bottom-actions {
+  padding: 12px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 13px 20px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  min-height: 48px;
+  transition: all 0.15s;
+  width: 100%;
+  -webkit-appearance: none;
+  user-select: none;
+}
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-dark); }
+.btn-primary:active { transform: scale(0.98); }
+.btn-secondary { background: var(--surface); color: var(--text); border: 1.5px solid var(--border); }
+.btn-secondary:hover { background: var(--bg); }
+.btn-danger { background: #fef2f2; color: var(--error); border: 1.5px solid #fecaca; }
+.btn-danger:hover { background: #fee2e2; }
+
+/* ===== NOTIFICATIONS ===== */
+.notif {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  padding: 12px 20px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 999;
+  white-space: nowrap;
+  max-width: calc(100vw - 40px);
+  animation: notifIn 0.28s cubic-bezier(0.34,1.56,0.64,1);
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+.notif.success { background: var(--success); color: #fff; }
+.notif.error { background: var(--error); color: #fff; }
+@keyframes notifIn {
+  from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
+/* ===== CALENDAR ===== */
+.cal-overlay {
+  position: absolute;
+  top: 68px;
+  left: 16px;
+  right: 16px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.14);
+  z-index: 200;
+  padding: 14px;
+  display: none;
+}
+.cal-overlay.open { display: block; animation: fadeIn 0.15s ease; }
+
+.cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.cal-nav-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 30px;
+  height: 30px;
+  font-size: 18px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.12s;
+}
+.cal-nav-btn:hover { background: var(--bg); }
+.cal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+.cal-close:hover { background: var(--bg); }
+.cal-title { font-size: 14px; font-weight: 600; }
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.cal-wd {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-light);
+  padding: 4px 0;
+}
+.cal-day {
+  text-align: center;
+  padding: 6px 2px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.1s;
+  color: var(--text);
+}
+.cal-day:hover { background: var(--bg); }
+.cal-day.has-data { color: var(--primary); font-weight: 600; }
+.cal-day.today { outline: 1.5px solid var(--primary); outline-offset: -1px; }
+.cal-day.in-range { background: var(--primary-light); }
+.cal-day.range-a, .cal-day.range-b {
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+  border-radius: 50%;
+}
+.cal-day.empty { cursor: default; }
+.cal-day.prev-month { color: var(--text-light); }
+
+.cal-actions { display: flex; gap: 8px; margin-top: 10px; }
+.cal-actions .btn { font-size: 12px; min-height: 36px; padding: 7px 14px; }
+
+/* ===== SETTINGS ===== */
+.settings-section-title {
+  padding: 6px 16px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-light);
+  margin-top: 4px;
+}
+
+.settings-card {
+  background: var(--surface);
+  margin: 0 16px 10px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-row:last-child { border-bottom: none; }
+
+.settings-row-label { font-size: 14px; font-weight: 500; }
+.settings-row-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+.settings-action-btn {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 7px 14px;
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+  transition: all 0.15s;
+  min-height: 36px;
+}
+.settings-action-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+.settings-field-row {
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-field-row:last-child { border-bottom: none; }
+
+/* ===== CONFIRM DIALOG ===== */
+.dialog-bg {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 500;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+  animation: fadeIn 0.15s ease;
+}
+.dialog {
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  padding: 24px 20px 32px;
+  width: 100%;
+  max-width: 480px;
+  animation: slideUp2 0.25s cubic-bezier(0.34,1.56,0.64,1);
+}
+@keyframes slideUp2 {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.dialog h3 { font-size: 17px; margin-bottom: 8px; }
+.dialog p { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+.dialog-btns { display: flex; flex-direction: column; gap: 8px; }
+
+/* ===== SCROLL ===== */
+.scroll-content { overflow-y: auto; }
+</style>
+</head>
+<body>
+<div class="app-shell" id="app">
+
+  <!-- ══════════ SCREEN: MAIN ══════════ -->
+  <div id="screen-main" class="screen active">
+    <div class="header">
+      <div class="logo"><div class="logo-mark">E</div> Экохак</div>
+      <div class="header-right">
+        <button class="settings-icon-btn" onclick="App.go('settings')" title="Настройки">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+        <div class="status-badge">
+          <div class="status-dot" id="dot-main"></div>
+          <span id="txt-main">connected</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="search-row">
+      <div class="search-wrap">
+        <input class="search-input" id="search-input" type="search" placeholder="Поиск"
+          oninput="App.onSearch(this.value)" autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+      <button class="filter-btn" id="filter-btn" onclick="App.toggleCal()">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+        </svg>
+      </button>
+
+      <!-- Calendar overlay -->
+      <div class="cal-overlay" id="cal-overlay"></div>
+    </div>
+
+    <div id="samples-list" class="samples-list"></div>
+  </div>
+
+  <!-- ══════════ SCREEN: CARD ══════════ -->
+  <div id="screen-card" class="screen">
+    <div class="header">
+      <button class="back-btn" onclick="App.go('main')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
+      <div class="logo"><div class="logo-mark">E</div> Экохак</div>
+      <div class="status-badge">
+        <div class="status-dot" id="dot-card"></div>
+        <span id="txt-card">connected</span>
+      </div>
+    </div>
+    <div id="card-body"></div>
+  </div>
+
+  <!-- ══════════ SCREEN: SETTINGS ══════════ -->
+  <div id="screen-settings" class="screen">
+    <div class="header">
+      <button class="back-btn" onclick="App.go('main')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
+      <div class="logo"><div class="logo-mark">E</div> Настройки</div>
+      <div class="status-badge">
+        <div class="status-dot" id="dot-settings"></div>
+        <span id="txt-settings">connected</span>
+      </div>
+    </div>
+    <div id="settings-body" style="padding-bottom:40px"></div>
+  </div>
+
+</div><!-- .app-shell -->
+
+<!-- Notification (outside app-shell so it's always visible) -->
+<div id="notif" class="notif" style="display:none"></div>
+
+<!-- Dialog container -->
+<div id="dialog-container"></div>
+
+<script>
+/* ======================================================
+   ECOHAK — Field Sample Management System
+   ESP32 Web Interface
+   ====================================================== */
+
+const App = {
+  // ─── State ───────────────────────────────────────────
+  s: {
+    screen: 'main',
+    samples: [],
+    selId: null,
+    editMode: false,
+    editBuf: {},
+    query: '',
+    calOpen: false,
+    calFilter: null,           // {from:'YYYY-MM-DD', to:'YYYY-MM-DD'}
+    calRangeA: null,           // first click
+    calM: new Date().getMonth(),
+    calY: new Date().getFullYear(),
+    expanded: new Set(),
+    connected: false,
+    settings: { expedition: 'ECOHAK-2026', prefix: 'EXP', printerOk: false },
+    notifTmr: null,
+    scrollMain: 0,
+  },
+
+  // ─── Init ────────────────────────────────────────────
+  async init() {
+    await this.loadSamples();
+    await this.loadSettings();
+
+    // Expand most recent date by default
+    const dates = [...new Set(this.s.samples.map(s => s.date))].sort().reverse();
+    if (dates[0]) this.s.expanded.add(dates[0]);
+
+    this.renderMain();
+    this.checkConn();
+    setInterval(() => this.checkConn(), 6000);
+
+    // Close cal on outside click
+    document.addEventListener('click', e => {
+      if (this.s.calOpen && !e.target.closest('#cal-overlay') && !e.target.closest('#filter-btn')) {
+        this.closeCal();
+      }
+    });
+  },
+
+  // ─── Connection check ────────────────────────────────
+  async checkConn() {
+    try {
+      const r = await fetch('/api/status', { signal: AbortSignal.timeout(2500) });
+      this.s.connected = r.ok;
+    } catch { this.s.connected = false; }
+    this.syncDots();
+  },
+
+  syncDots() {
+    const cls = this.s.connected ? '' : ' off';
+    const txt = this.s.connected ? 'connected' : 'not connected';
+    ['main','card','settings'].forEach(sc => {
+      const d = document.getElementById('dot-' + sc);
+      const t = document.getElementById('txt-' + sc);
+      if (d) d.className = 'status-dot' + cls;
+      if (t) t.textContent = txt;
+    });
+  },
+
+  // ─── Navigation ──────────────────────────────────────
+  go(screen, opts = {}) {
+    if (this.s.screen === 'main') this.s.scrollMain = window.scrollY;
+
+    document.getElementById('screen-' + this.s.screen).classList.remove('active');
+    this.s.screen = screen;
+    document.getElementById('screen-' + screen).classList.add('active');
+
+    if (screen !== 'main') window.scrollTo(0, 0);
+
+    if (screen === 'main') {
+      this.s.editMode = false;
+      this.renderMain();
+      setTimeout(() => window.scrollTo(0, this.s.scrollMain), 0);
+    } else if (screen === 'card') {
+      if (opts.id) this.s.selId = opts.id;
+      this.s.editMode = opts.edit || false;
+      if (opts.edit) this.s.editBuf = { ...this.getSample(this.s.selId) };
+      this.renderCard();
+    } else if (screen === 'settings') {
+      this.renderSettings();
+    }
+  },
+
+  // ─── Data ────────────────────────────────────────────
+  getSample(id) { return this.s.samples.find(s => s.id === id); },
+
+  async loadSamples() {
+    try {
+      const r = await fetch('/api/samples');
+      if (r.ok) { this.s.samples = await r.json(); return; }
+    } catch {}
+    this.s.samples = this.mockData();
+  },
+
+  async loadSettings() {
+    try {
+      const r = await fetch('/api/settings');
+      if (r.ok) { this.s.settings = { ...this.s.settings, ...await r.json() }; return; }
+    } catch {}
+  },
+
+  mockData() {
+    return [
+      { id:'322', date:'2026-01-24', time:'17:11', lat:'37.8421', lon:'-122.3167', temp:'21', note:'' },
+      { id:'321', date:'2026-01-23', time:'15:43', lat:'37.8490', lon:'-122.3200', temp:'20', note:'Мутная вода' },
+      { id:'320', date:'2026-01-23', time:'14:22', lat:'37.8312', lon:'-122.3100', temp:'22', note:'' },
+      { id:'319', date:'2026-01-23', time:'12:05', lat:'37.8250', lon:'-122.3050', temp:'19', note:'' },
+      { id:'318', date:'2026-01-22', time:'10:30', lat:'37.8150', lon:'-122.2900', temp:'18', note:'' },
+      { id:'317', date:'2026-01-22', time:'09:15', lat:'37.8100', lon:'-122.2850', temp:'17', note:'Запах сероводорода' },
+    ];
+  },
+
+  // ─── Filtering ───────────────────────────────────────
+  filtered() {
+    let list = this.s.samples;
+    const q = this.s.query.toLowerCase().trim();
+    if (q) {
+      list = list.filter(s =>
+        s.id.toLowerCase().includes(q) ||
+        s.temp.toString().includes(q) ||
+        s.lat.toString().includes(q) ||
+        s.lon.toString().includes(q) ||
+        (s.note && s.note.toLowerCase().includes(q))
+      );
+    }
+    if (this.s.calFilter) {
+      const { from, to } = this.s.calFilter;
+      list = list.filter(s => s.date >= from && s.date <= to);
+    }
+    return list;
+  },
+
+  grouped() {
+    const groups = {};
+    this.filtered().forEach(s => {
+      if (!groups[s.date]) groups[s.date] = [];
+      groups[s.date].push(s);
+    });
+    return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a));
+  },
+
+  // ─── Formatting ──────────────────────────────────────
+  fmtDate(d) {
+    const m = ['Январь','Февраль','Март','Апрель','Май','Июнь',
+               'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const [,mo,da] = d.split('-');
+    return m[+mo-1] + ', ' + +da;
+  },
+
+  fmtShort(d) {
+    const m = ['ЯНВ','ФЕВ','МАР','АПР','МАЙ','ИЮН','ИЮЛ','АВГ','СЕН','ОКТ','НОЯ','ДЕК'];
+    const [,mo,da] = d.split('-');
+    return +da + ' ' + m[+mo-1];
+  },
+
+  // ─── Main screen ─────────────────────────────────────
+  onSearch(q) {
+    this.s.query = q;
+    this.renderSamplesList();
+  },
+
+  toggleGroup(date) {
+    if (this.s.expanded.has(date)) this.s.expanded.delete(date);
+    else this.s.expanded.add(date);
+    this.renderSamplesList();
+  },
+
+  renderMain() { this.renderSamplesList(); },
+
+  renderSamplesList() {
+    const groups = this.grouped();
+    const el = document.getElementById('samples-list');
+
+    if (!groups.length) {
+      el.innerHTML = `<div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">Ничего не найдено</div>
+        <div class="empty-sub">Попробуйте другой запрос или сбросьте фильтр</div>
+      </div>`;
+      return;
+    }
+
+    el.innerHTML = groups.map(([date, samples]) => {
+      const open = this.s.expanded.has(date);
+      const cards = open ? samples.map(s => `
+        <div class="sample-card" onclick="App.go('card',{id:'${esc(s.id)}'})">
+          <div class="card-top">
+            <div class="id-badge">ID ${esc(s.id)}</div>
+            <button class="card-edit-btn" onclick="event.stopPropagation();App.go('card',{id:'${esc(s.id)}',edit:true})">Редактировать</button>
+          </div>
+          <div class="card-grid">
+            <div class="card-cell">
+              <label>Температура</label>
+              <div class="val">${esc(s.temp)} °C</div>
+            </div>
+            <div class="card-cell right">
+              <label>Широта</label>
+              <div class="val">${esc(s.lat)}</div>
+            </div>
+            <div class="card-cell">
+              <label>Время</label>
+              <div class="val">${this.fmtShort(s.date)} ${esc(s.time)}</div>
+            </div>
+            <div class="card-cell right">
+              <label>Долгота</label>
+              <div class="val">${esc(s.lon)}</div>
+            </div>
+          </div>
+        </div>
+      `).join('') : '';
+
+      return `<div class="date-group" id="grp-${date}">
+        <div class="date-header ${open ? '' : 'collapsed'}" onclick="App.toggleGroup('${date}')">
+          <span class="date-chevron">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </span>
+          ${this.fmtDate(date)}
+          <span class="date-count">${samples.length}</span>
+          <button class="date-csv-btn" onclick="event.stopPropagation();App.exportDateCSV('${date}')">CSV ↓</button>
+        </div>
+        <div class="date-items">${cards}</div>
+      </div>`;
+    }).join('');
+  },
+
+  // ─── Card screen ─────────────────────────────────────
+  renderCard() {
+    const s = this.getSample(this.s.selId);
+    if (!s) { this.go('main'); return; }
+    document.getElementById('card-body').innerHTML =
+      this.s.editMode ? this.tplEdit(s) : this.tplView(s);
+  },
+
+  tplView(s) {
+    return `
+      <div class="id-top-display">ID ${esc(s.id)}</div>
+
+      <div class="field-block">
+        <label class="field-label">Температура</label>
+        <div class="field-val">${esc(s.temp)} °C</div>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Время UTC</label>
+        <div class="field-val">${this.fmtShort(s.date)} ${esc(s.time)}</div>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Широта</label>
+        <div class="field-val">${esc(s.lat)}</div>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Долгота</label>
+        <div class="field-val">${esc(s.lon)}</div>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Заметка</label>
+        <div class="field-val" style="min-height:52px">${s.note ? esc(s.note) : '<span style="color:var(--text-light)">—</span>'}</div>
+      </div>
+
+      <div class="qr-wrap" id="qr-wrap">
+        <img src="/api/qr?data=${encodeURIComponent(s.id)}" width="160" height="160" alt="QR"
+          onerror="document.getElementById('qr-wrap').innerHTML='<div class=qr-placeholder>QR<br>недоступен</div>'">
+      </div>
+
+      <div class="bottom-actions">
+        <button class="btn btn-primary" onclick="App.printLabel()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          Напечатать этикетку
+        </button>
+        <button class="btn btn-secondary" onclick="App.copyId('${esc(s.id)}')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Копировать ID
+        </button>
+        <button class="btn btn-secondary" onclick="App.go('card',{id:'${esc(s.id)}',edit:true})">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Редактировать
+        </button>
+      </div>`;
+  },
+
+  tplEdit(s) {
+    const b = this.s.editBuf;
+    const warnHtml = `<div class="warn-hint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Научные данные — изменяйте осторожно</div>`;
+
+    return `
+      <div class="id-top-display" style="color:var(--text-muted)">Редактирование</div>
+
+      <div class="field-block">
+        <label class="field-label">Номер пробы</label>
+        <input class="field-input" id="e-id" value="${esc(b.id)}" oninput="App.s.editBuf.id=this.value">
+      </div>
+      <div class="field-block">
+        <label class="field-label">Температура, °C</label>
+        <input class="field-input warn" id="e-temp" value="${esc(b.temp)}" oninput="App.s.editBuf.temp=this.value">
+        ${warnHtml}
+      </div>
+      <div class="field-block">
+        <label class="field-label">Время</label>
+        <input class="field-input warn" id="e-time" value="${esc(b.time)}" oninput="App.s.editBuf.time=this.value">
+        ${warnHtml}
+      </div>
+      <div class="field-block">
+        <label class="field-label">Широта</label>
+        <input class="field-input warn" id="e-lat" value="${esc(b.lat)}" oninput="App.s.editBuf.lat=this.value">
+        ${warnHtml}
+      </div>
+      <div class="field-block">
+        <label class="field-label">Долгота</label>
+        <input class="field-input warn" id="e-lon" value="${esc(b.lon)}" oninput="App.s.editBuf.lon=this.value">
+        ${warnHtml}
+      </div>
+      <div class="field-block">
+        <label class="field-label">Заметка</label>
+        <textarea class="field-input" id="e-note" oninput="App.s.editBuf.note=this.value">${esc(b.note||'')}</textarea>
+      </div>
+
+      <div class="bottom-actions">
+        <button class="btn btn-primary" onclick="App.saveEdit()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          Сохранить
+        </button>
+        <button class="btn btn-secondary" onclick="App.go('card',{id:'${esc(s.id)}'})">Отмена</button>
+      </div>`;
+  },
+
+  async saveEdit() {
+    const data = { ...this.s.editBuf };
+    const oldId = this.s.selId;
+    try {
+      const r = await fetch('/api/samples/' + encodeURIComponent(oldId), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (r.ok) {
+        const updated = await r.json();
+        const i = this.s.samples.findIndex(s => s.id === oldId);
+        if (i >= 0) this.s.samples[i] = updated;
+        this.s.selId = updated.id;
+      } else throw 0;
+    } catch {
+      const i = this.s.samples.findIndex(s => s.id === oldId);
+      if (i >= 0) this.s.samples[i] = { ...data };
+      this.s.selId = data.id;
+    }
+    this.s.editMode = false;
+    this.renderCard();
+    this.notify('Сохранено ✓', 'success');
+  },
+
+  async printLabel() {
+    try {
+      const r = await fetch('/api/printer/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: this.s.selId })
+      });
+      if (!r.ok) throw 0;
+      this.notify('Этикетка отправлена на печать ✓', 'success');
+    } catch {
+      this.notify('Ошибка печати: принтер недоступен', 'error');
+    }
+  },
+
+  copyId(id) {
+    (navigator.clipboard ? navigator.clipboard.writeText(id) : Promise.reject())
+      .catch(() => {
+        const t = document.createElement('textarea');
+        t.value = id; document.body.appendChild(t);
+        t.select(); document.execCommand('copy');
+        document.body.removeChild(t);
+      })
+      .finally(() => this.notify('ID скопирован ✓', 'success'));
+  },
+
+  // ─── Settings screen ─────────────────────────────────
+  renderSettings() {
+    const s = this.s.settings;
+    const printerColor = s.printerOk ? 'var(--success)' : 'var(--error)';
+    const printerTxt = s.printerOk ? 'подключён' : 'не подключён';
+
+    document.getElementById('settings-body').innerHTML = `
+      <!-- BACKUP -->
+      <div class="settings-section-title">Бэкап и экспорт</div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Все пробы CSV</div>
+            <div class="settings-row-sub">${this.s.samples.length} записей</div>
+          </div>
+          <button class="settings-action-btn" onclick="App.exportAllCSV()">↓ CSV</button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">JSON (сырые данные)</div>
+            <div class="settings-row-sub">Для обработки в ПО</div>
+          </div>
+          <button class="settings-action-btn" onclick="App.exportJSON()">↓ JSON</button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">ZIP-архив</div>
+            <div class="settings-row-sub">База + CSV с датой</div>
+          </div>
+          <button class="settings-action-btn" onclick="App.exportZip()">↓ ZIP</button>
+        </div>
+      </div>
+
+      <!-- PRINTER -->
+      <div class="settings-section-title">Принтер</div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div class="settings-row-label">Статус подключения</div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted)">
+            <div style="width:8px;height:8px;border-radius:50%;background:${printerColor}"></div>
+            ${printerTxt}
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Тестовая печать</div>
+          <button class="settings-action-btn" onclick="App.testPrint()">Печать</button>
+        </div>
+      </div>
+
+      <!-- EXPEDITION -->
+      <div class="settings-section-title">Экспедиция</div>
+      <div class="settings-card">
+        <div class="settings-field-row">
+          <label class="field-label">Название экспедиции</label>
+          <input class="field-input" id="cfg-expedition" value="${esc(s.expedition||'')}" placeholder="ECOHAK-2026" style="margin-top:4px">
+        </div>
+        <div class="settings-field-row">
+          <label class="field-label">Префикс ID проб</label>
+          <input class="field-input" id="cfg-prefix" value="${esc(s.prefix||'')}" placeholder="EXP" style="margin-top:4px">
+        </div>
+        <div class="settings-field-row" style="border-bottom:none">
+          <button class="btn btn-primary" onclick="App.saveSettings()" style="min-height:44px">Сохранить настройки</button>
+        </div>
+      </div>
+
+      <!-- DANGER -->
+      <div class="settings-section-title" style="color:var(--error)">Опасная зона</div>
+      <div class="settings-card">
+        <div class="settings-field-row" style="border-bottom:none">
+          <div class="settings-row-label" style="margin-bottom:4px">Очистить все записи</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Удалит все пробы без возможности восстановления</div>
+          <button class="btn btn-danger" onclick="App.confirmClearAll()" style="min-height:44px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m5 0V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2"/></svg>
+            Удалить все пробы
+          </button>
+        </div>
+      </div>
+    `;
+  },
+
+  async saveSettings() {
+    const cfg = {
+      ...this.s.settings,
+      expedition: document.getElementById('cfg-expedition').value,
+      prefix: document.getElementById('cfg-prefix').value,
+    };
+    this.s.settings = cfg;
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      });
+    } catch {}
+    this.notify('Настройки сохранены ✓', 'success');
+  },
+
+  async testPrint() {
+    try {
+      const r = await fetch('/api/printer/test', { method: 'POST' });
+      if (!r.ok) throw 0;
+      this.notify('Тестовая страница отправлена ✓', 'success');
+    } catch {
+      this.notify('Ошибка: принтер не отвечает', 'error');
+    }
+  },
+
+  confirmClearAll() {
+    this.dialog({
+      title: 'Удалить все пробы?',
+      text: 'Это действие нельзя отменить. Все ' + this.s.samples.length + ' записей будут безвозвратно удалены.',
+      confirm: 'Удалить всё',
+      danger: true,
+      onConfirm: () => this.clearAll()
+    });
+  },
+
+  async clearAll() {
+    try {
+      await fetch('/api/samples/all', { method: 'DELETE' });
+    } catch {}
+    this.s.samples = [];
+    this.go('main');
+    this.notify('Все записи удалены', 'error');
+  },
+
+  // ─── Export ──────────────────────────────────────────
+  exportDateCSV(date) {
+    const rows = this.s.samples.filter(s => s.date === date);
+    this.dlCSV(rows, 'samples_' + date + '.csv');
+    this.notify('CSV экспортирован ✓', 'success');
+  },
+
+  async exportAllCSV() {
+    try {
+      const r = await fetch('/api/export/csv');
+      if (r.ok) { this.dlBlob(await r.blob(), 'samples_all.csv'); this.notify('CSV скачан ✓','success'); return; }
+    } catch {}
+    this.dlCSV(this.s.samples, 'samples_all.csv');
+    this.notify('CSV экспортирован ✓', 'success');
+  },
+
+  async exportJSON() {
+    try {
+      const r = await fetch('/api/export/json');
+      if (r.ok) { this.dlBlob(await r.blob(), 'samples.json'); this.notify('JSON скачан ✓','success'); return; }
+    } catch {}
+    const blob = new Blob([JSON.stringify({ samples: this.s.samples, exported: new Date().toISOString() }, null, 2)], { type: 'application/json' });
+    this.dlBlob(blob, 'samples.json');
+    this.notify('JSON экспортирован ✓', 'success');
+  },
+
+  async exportZip() {
+    try {
+      const r = await fetch('/api/export/zip');
+      if (r.ok) {
+        const date = new Date().toISOString().split('T')[0];
+        this.dlBlob(await r.blob(), 'ecohak_backup_' + date + '.zip');
+        this.notify('ZIP скачан ✓', 'success');
+        return;
+      }
+    } catch {}
+    this.notify('ZIP доступен только через ESP32', 'error');
+  },
+
+  dlCSV(samples, filename) {
+    const hdr = 'ID,Дата,Время,Температура,Широта,Долгота,Заметка\r\n';
+    const rows = samples.map(s =>
+      `${s.id},${s.date},${s.time},${s.temp},${s.lat},${s.lon},"${(s.note||'').replace(/"/g,'""')}"`
+    ).join('\r\n');
+    this.dlBlob(new Blob(['\uFEFF' + hdr + rows], { type: 'text/csv;charset=utf-8' }), filename);
+  },
+
+  dlBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  // ─── Calendar ────────────────────────────────────────
+  toggleCal() {
+    this.s.calOpen ? this.closeCal() : this.openCal();
+  },
+
+  openCal() {
+    this.s.calOpen = true;
+    this.s.calRangeA = null;
+    document.getElementById('filter-btn').classList.add('active');
+    const ov = document.getElementById('cal-overlay');
+    ov.classList.add('open');
+    this.renderCal();
+  },
+
+  closeCal() {
+    this.s.calOpen = false;
+    document.getElementById('cal-overlay').classList.remove('open');
+    if (!this.s.calFilter) document.getElementById('filter-btn').classList.remove('active');
+  },
+
+  renderCal() {
+    const { calM: m, calY: y, calFilter: cf, calRangeA: ra } = this.s;
+    const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const WD = ['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС'];
+    const today = new Date().toISOString().split('T')[0];
+    const datesWithData = new Set(this.s.samples.map(s => s.date));
+
+    const totalDays = new Date(y, m + 1, 0).getDate();
+    const firstWd = (new Date(y, m, 1).getDay() + 6) % 7; // Mon=0
+
+    let days = '';
+    for (let i = 0; i < firstWd; i++) days += `<div class="cal-day empty"></div>`;
+
+    for (let d = 1; d <= totalDays; d++) {
+      const ds = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      let cls = 'cal-day';
+      if (datesWithData.has(ds)) cls += ' has-data';
+      if (ds === today) cls += ' today';
+      if (cf && ds >= cf.from && ds <= cf.to) cls += ' in-range';
+      if (cf && ds === cf.from) cls += ' range-a';
+      if (cf && ds === cf.to && cf.from !== cf.to) cls += ' range-b';
+      if (ra && ds === ra && !cf) cls += ' range-a';
+      days += `<div class="${cls}" onclick="App.calDay('${ds}')">${d}</div>`;
+    }
+
+    const ov = document.getElementById('cal-overlay');
+    ov.innerHTML = `
+      <div class="cal-nav">
+        <button class="cal-nav-btn" onclick="App.calPrev()">‹</button>
+        <span class="cal-title">${MONTHS[m]} ${y}</span>
+        <button class="cal-nav-btn" onclick="App.calNext()">›</button>
+        <button class="cal-close" onclick="App.closeCal()">✕</button>
+      </div>
+      <div class="cal-grid">
+        ${WD.map(w => `<div class="cal-wd">${w}</div>`).join('')}
+        ${days}
+      </div>
+      <div class="cal-actions">
+        <button class="btn btn-secondary" onclick="App.calClear()">Сбросить</button>
+        ${this.s.calFilter ? `<div style="font-size:11px;color:var(--text-muted);align-self:center">
+          ${this.fmtDate(this.s.calFilter.from)} – ${this.fmtDate(this.s.calFilter.to)}
+        </div>` : ''}
+      </div>`;
+  },
+
+  calPrev() {
+    if (this.s.calM === 0) { this.s.calM = 11; this.s.calY--; }
+    else this.s.calM--;
+    this.renderCal();
+  },
+
+  calNext() {
+    if (this.s.calM === 11) { this.s.calM = 0; this.s.calY++; }
+    else this.s.calM++;
+    this.renderCal();
+  },
+
+  calDay(ds) {
+    if (!this.s.calRangeA) {
+      this.s.calRangeA = ds;
+      this.s.calFilter = null;
+    } else {
+      const a = this.s.calRangeA;
+      this.s.calFilter = { from: a < ds ? a : ds, to: a < ds ? ds : a };
+      this.s.calRangeA = null;
+      this.closeCal();
+      document.getElementById('filter-btn').classList.add('active');
+      this.renderSamplesList();
+      return;
+    }
+    this.renderCal();
+  },
+
+  calClear() {
+    this.s.calFilter = null;
+    this.s.calRangeA = null;
+    this.closeCal();
+    document.getElementById('filter-btn').classList.remove('active');
+    this.renderSamplesList();
+  },
+
+  // ─── Dialog ──────────────────────────────────────────
+  dialog({ title, text, confirm, danger, onConfirm }) {
+    const dc = document.getElementById('dialog-container');
+    dc.innerHTML = `
+      <div class="dialog-bg" onclick="if(event.target===this)App.closeDialog()">
+        <div class="dialog">
+          <h3>${title}</h3>
+          <p>${text}</p>
+          <div class="dialog-btns">
+            <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="dlg-confirm">${confirm}</button>
+            <button class="btn btn-secondary" onclick="App.closeDialog()">Отмена</button>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('dlg-confirm').onclick = () => {
+      this.closeDialog();
+      onConfirm();
+    };
+  },
+
+  closeDialog() {
+    document.getElementById('dialog-container').innerHTML = '';
+  },
+
+  // ─── Notifications ───────────────────────────────────
+  notify(msg, type = 'success') {
+    const el = document.getElementById('notif');
+    el.textContent = msg;
+    el.className = 'notif ' + type;
+    el.style.display = 'block';
+    clearTimeout(this.s.notifTmr);
+    this.s.notifTmr = setTimeout(() => { el.style.display = 'none'; }, 3200);
+  },
+};
+
+// Helper: escape HTML entities
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+document.addEventListener('DOMContentLoaded', () => App.init());
+</script>
+</body>
 </html>

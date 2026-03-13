@@ -7,6 +7,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <SD.h>
+#include <vector>
+#include <qrcode.h>
 #include "printer_module.h"
 
 LV_FONT_DECLARE(lv_font_ru_12);
@@ -20,6 +22,7 @@ static constexpr int BUTTON_PIN = 21;
 static constexpr int SAMPLE_MS = 1;
 static constexpr int PRESS_STABLE_SAMPLES = 12;
 static constexpr int RELEASE_STABLE_SAMPLES = 12;
+static constexpr uint32_t DOUBLE_CLICK_MS = 350;
 static constexpr const char* AP_SSID = "EcoLog-Device";
 static constexpr const char* AP_PASS = "ecolog123";
 
@@ -48,6 +51,24 @@ static uint32_t lastButtonSampleMs = 0;
 static uint8_t buttonStable = HIGH;
 static uint8_t buttonLastRaw = HIGH;
 static uint16_t buttonSameCount = 0;
+static uint8_t buttonClickCount = 0;
+static uint32_t firstClickMs = 0;
+static String webExpedition = "ECOHAK-2026";
+static String webPrefix = "EXP";
+
+struct WebSample {
+  String id;
+  String timestamp;
+  String date;
+  String time;
+  String temp;
+  String lat;
+  String lon;
+  String note;
+  bool fixValid = false;
+  bool tempValid = false;
+  uint32_t capturedMs = 0;
+};
 
 static bool initSd() {
   if (sdReady) {
@@ -150,6 +171,136 @@ static bool csvColumn(const String& line, int index, String& out) {
   return true;
 }
 
+static void splitTimestamp(const String& timestamp, String& date, String& time) {
+  if (timestamp.length() == 14) {
+    date = timestamp.substring(0, 4) + "-" + timestamp.substring(4, 6) + "-" + timestamp.substring(6, 8);
+    time = timestamp.substring(8, 10) + ":" + timestamp.substring(10, 12) + ":" + timestamp.substring(12, 14);
+    return;
+  }
+  date = "";
+  time = timestamp;
+}
+
+static bool loadSamples(std::vector<WebSample>& samples) {
+  samples.clear();
+  if (!initSd()) {
+    return false;
+  }
+  if (!SD.exists("/samples.csv")) {
+    return true;
+  }
+
+  File f = SD.open("/samples.csv", FILE_READ);
+  if (!f) {
+    return false;
+  }
+
+  bool headerSkipped = false;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.isEmpty()) {
+      continue;
+    }
+    if (!headerSkipped) {
+      headerSkipped = true;
+      if (line.startsWith("id,")) {
+        continue;
+      }
+    }
+
+    WebSample sample;
+    String fixValid;
+    String tempValid;
+    String capturedMs;
+    csvColumn(line, 0, sample.id);
+    csvColumn(line, 1, sample.timestamp);
+    csvColumn(line, 2, sample.lat);
+    csvColumn(line, 3, sample.lon);
+    csvColumn(line, 4, sample.temp);
+    csvColumn(line, 5, fixValid);
+    csvColumn(line, 6, tempValid);
+    csvColumn(line, 7, capturedMs);
+    csvColumn(line, 8, sample.note);
+    splitTimestamp(sample.timestamp, sample.date, sample.time);
+    sample.fixValid = fixValid.toInt() != 0;
+    sample.tempValid = tempValid.toInt() != 0;
+    sample.capturedMs = static_cast<uint32_t>(capturedMs.toInt());
+    samples.push_back(sample);
+  }
+
+  f.close();
+  return true;
+}
+
+static bool writeSamples(const std::vector<WebSample>& samples) {
+  if (!initSd()) {
+    return false;
+  }
+
+  if (SD.exists("/samples.csv")) {
+    SD.remove("/samples.csv");
+  }
+
+  File f = SD.open("/samples.csv", FILE_WRITE);
+  if (!f) {
+    return false;
+  }
+
+  f.println("id,timestamp,lat,lon,temp_c,fix_valid,temp_valid,captured_ms,note");
+  for (const WebSample& sample : samples) {
+    char line[320];
+    snprintf(line, sizeof(line), "%s,%s,%s,%s,%s,%u,%u,%lu,%s",
+             sample.id.c_str(),
+             sample.timestamp.c_str(),
+             sample.lat.length() ? sample.lat.c_str() : "0",
+             sample.lon.length() ? sample.lon.c_str() : "0",
+             sample.temp.length() ? sample.temp.c_str() : "0",
+             sample.fixValid ? 1 : 0,
+             sample.tempValid ? 1 : 0,
+             static_cast<unsigned long>(sample.capturedMs),
+             sample.note.c_str());
+    f.println(line);
+  }
+  f.close();
+  return true;
+}
+
+static void sendSampleJson(WiFiClient& client, const WebSample& sample) {
+  client.print("{\"id\":\"");
+  client.print(jsonEscape(sample.id));
+  client.print("\",\"date\":\"");
+  client.print(jsonEscape(sample.date));
+  client.print("\",\"time\":\"");
+  client.print(jsonEscape(sample.time));
+  client.print("\",\"temp\":\"");
+  client.print(jsonEscape(sample.tempValid ? sample.temp : String("")));
+  client.print("\",\"lat\":\"");
+  client.print(jsonEscape(sample.fixValid ? sample.lat : String("")));
+  client.print("\",\"lon\":\"");
+  client.print(jsonEscape(sample.fixValid ? sample.lon : String("")));
+  client.print("\",\"note\":\"");
+  client.print(jsonEscape(sample.note));
+  client.print("\",\"timestamp\":\"");
+  client.print(jsonEscape(sample.timestamp));
+  client.print("\",\"temp_valid\":");
+  client.print(sample.tempValid ? "true" : "false");
+  client.print(",\"fix_valid\":");
+  client.print(sample.fixValid ? "true" : "false");
+  client.print(",\"captured_ms\":");
+  client.print(sample.capturedMs);
+  client.print("}");
+}
+
+static int findSampleIndex(const std::vector<WebSample>& samples, const String& id) {
+  for (size_t i = 0; i < samples.size(); ++i) {
+    if (samples[i].id == id) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
 static bool streamFromSd(const String& path) {
   if (!initSd()) {
     server.send(500, "text/plain", "SD init failed");
@@ -237,6 +388,11 @@ static void handleStatus() {
   json += WiFi.softAPIP().toString();
   json += "\",\"sd_ready\":";
   json += initSd() ? "true" : "false";
+  json += ",\"samples\":";
+  std::vector<WebSample> samples;
+  json += loadSamples(samples) ? String(samples.size()) : "0";
+  json += ",\"heap\":";
+  json += ESP.getFreeHeap();
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -324,6 +480,258 @@ static void handleGetRecords() {
   client.print("]}");
 }
 
+static void handleGetSamples() {
+  std::vector<WebSample> samples;
+  if (!loadSamples(samples)) {
+    server.send(500, "application/json", "{\"error\":\"SD init failed\"}");
+    return;
+  }
+
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+  WiFiClient client = server.client();
+  client.print('[');
+  for (size_t i = 0; i < samples.size(); ++i) {
+    if (i) {
+      client.print(',');
+    }
+    sendSampleJson(client, samples[i]);
+  }
+  client.print(']');
+}
+
+static void handleDeleteAllSamples() {
+  if (!initSd()) {
+    server.send(500, "application/json", "{\"error\":\"SD init failed\"}");
+    return;
+  }
+  std::vector<WebSample> empty;
+  if (!writeSamples(empty)) {
+    server.send(500, "application/json", "{\"error\":\"Write failed\"}");
+    return;
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handleExportCsv() {
+  std::vector<WebSample> samples;
+  if (!loadSamples(samples)) {
+    server.send(500, "application/json", "{\"error\":\"SD init failed\"}");
+    return;
+  }
+
+  String csv = "\xEF\xBB\xBFID,Дата,Время,Температура,Широта,Долгота,Заметка\r\n";
+  for (const WebSample& sample : samples) {
+    String note = sample.note;
+    note.replace("\"", "\"\"");
+    csv += sample.id + "," + sample.date + "," + sample.time + "," +
+           (sample.tempValid ? sample.temp : "") + "," +
+           (sample.fixValid ? sample.lat : "") + "," +
+           (sample.fixValid ? sample.lon : "") + ",\"" + note + "\"\r\n";
+  }
+  server.send(200, "text/csv; charset=utf-8", csv);
+}
+
+static void handleExportJson() {
+  std::vector<WebSample> samples;
+  if (!loadSamples(samples)) {
+    server.send(500, "application/json", "{\"error\":\"SD init failed\"}");
+    return;
+  }
+
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+  WiFiClient client = server.client();
+  client.print("{\"samples\":[");
+  for (size_t i = 0; i < samples.size(); ++i) {
+    if (i) {
+      client.print(',');
+    }
+    sendSampleJson(client, samples[i]);
+  }
+  client.print("]}");
+}
+
+static void handleGetSettings() {
+  String json = "{\"expedition\":\"";
+  json += jsonEscape(webExpedition);
+  json += "\",\"prefix\":\"";
+  json += jsonEscape(webPrefix);
+  json += "\",\"printerOk\":true}";
+  server.send(200, "application/json", json);
+}
+
+static void handlePostSettings() {
+  if (server.hasArg("plain")) {
+    const String body = server.arg("plain");
+    const int expKey = body.indexOf("\"expedition\"");
+    const int prefixKey = body.indexOf("\"prefix\"");
+    if (expKey >= 0) {
+      const int firstQuote = body.indexOf('\"', body.indexOf(':', expKey) + 1);
+      const int secondQuote = body.indexOf('\"', firstQuote + 1);
+      if (firstQuote >= 0 && secondQuote > firstQuote) {
+        webExpedition = body.substring(firstQuote + 1, secondQuote);
+      }
+    }
+    if (prefixKey >= 0) {
+      const int firstQuote = body.indexOf('\"', body.indexOf(':', prefixKey) + 1);
+      const int secondQuote = body.indexOf('\"', firstQuote + 1);
+      if (firstQuote >= 0 && secondQuote > firstQuote) {
+        webPrefix = body.substring(firstQuote + 1, secondQuote);
+      }
+    }
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handlePrinterTest() {
+  const bool ok = printerModulePrint("TEST", "TEST");
+  server.send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"error\":\"print failed\"}");
+}
+
+static void handlePrinterPrint() {
+  const String body = server.arg("plain");
+  const int idKey = body.indexOf("\"id\"");
+  if (idKey < 0) {
+    server.send(400, "application/json", "{\"error\":\"id required\"}");
+    return;
+  }
+
+  const int firstQuote = body.indexOf('\"', body.indexOf(':', idKey) + 1);
+  const int secondQuote = body.indexOf('\"', firstQuote + 1);
+  if (firstQuote < 0 || secondQuote <= firstQuote) {
+    server.send(400, "application/json", "{\"error\":\"id required\"}");
+    return;
+  }
+
+  const String id = body.substring(firstQuote + 1, secondQuote);
+  std::vector<WebSample> samples;
+  if (!loadSamples(samples)) {
+    server.send(500, "application/json", "{\"error\":\"SD init failed\"}");
+    return;
+  }
+
+  const int index = findSampleIndex(samples, id);
+  if (index < 0) {
+    server.send(404, "application/json", "{\"error\":\"not found\"}");
+    return;
+  }
+
+  const WebSample& sample = samples[index];
+  const bool ok = printerModulePrintSnapshot(
+      sample.id.c_str(),
+      sample.timestamp.c_str(),
+      sample.lat.toDouble(),
+      sample.lon.toDouble(),
+      sample.temp.toFloat(),
+      sample.fixValid,
+      sample.tempValid);
+  server.send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"error\":\"print failed\"}");
+}
+
+static void handleUpdateSample() {
+  String id = server.uri();
+  const String prefix = "/api/samples/";
+  if (!id.startsWith(prefix)) {
+    server.send(404, "application/json", "{\"error\":\"not found\"}");
+    return;
+  }
+  id.remove(0, prefix.length());
+
+  std::vector<WebSample> samples;
+  if (!loadSamples(samples)) {
+    server.send(500, "application/json", "{\"error\":\"SD init failed\"}");
+    return;
+  }
+
+  const int index = findSampleIndex(samples, id);
+  if (index < 0) {
+    server.send(404, "application/json", "{\"error\":\"not found\"}");
+    return;
+  }
+
+  WebSample& sample = samples[index];
+  const String body = server.arg("plain");
+  auto extractString = [&](const char* key, String& target) {
+    const String pattern = String("\"") + key + "\"";
+    const int keyPos = body.indexOf(pattern);
+    if (keyPos < 0) {
+      return;
+    }
+    const int valueStart = body.indexOf('\"', body.indexOf(':', keyPos) + 1);
+    const int valueEnd = body.indexOf('\"', valueStart + 1);
+    if (valueStart >= 0 && valueEnd > valueStart) {
+      target = body.substring(valueStart + 1, valueEnd);
+    }
+  };
+
+  extractString("id", sample.id);
+  extractString("date", sample.date);
+  extractString("time", sample.time);
+  extractString("temp", sample.temp);
+  extractString("lat", sample.lat);
+  extractString("lon", sample.lon);
+  extractString("note", sample.note);
+  sample.timestamp = sample.date;
+  sample.timestamp.replace("-", "");
+  String compactTime = sample.time;
+  compactTime.replace(":", "");
+  sample.timestamp += compactTime;
+  sample.fixValid = sample.lat.length() && sample.lon.length();
+  sample.tempValid = sample.temp.length();
+
+  if (!writeSamples(samples)) {
+    server.send(500, "application/json", "{\"error\":\"Write failed\"}");
+    return;
+  }
+
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+  WiFiClient client = server.client();
+  sendSampleJson(client, sample);
+}
+
+static void handleQrSvg() {
+  String data = server.hasArg("data") ? server.arg("data") : "?";
+  if (data.length() > 50) {
+    data = data.substring(0, 50);
+  }
+
+  const int version = 3;
+  const int cell = 6;
+  const int quiet = 4;
+  QRCode qr;
+  uint8_t qrBuffer[qrcode_getBufferSize(version)];
+  qrcode_initText(&qr, qrBuffer, version, ECC_MEDIUM, data.c_str());
+
+  const int size = (qr.size + quiet * 2) * cell;
+  String svg = "<svg xmlns='http://www.w3.org/2000/svg' width='" + String(size) +
+               "' height='" + String(size) + "'><rect width='" + String(size) +
+               "' height='" + String(size) + "' fill='white'/>";
+  for (int y = 0; y < qr.size; ++y) {
+    for (int x = 0; x < qr.size; ++x) {
+      if (qrcode_getModule(&qr, x, y)) {
+        svg += "<rect x='" + String((x + quiet) * cell) + "' y='" + String((y + quiet) * cell) +
+               "' width='" + String(cell) + "' height='" + String(cell) + "' fill='black'/>";
+      }
+    }
+  }
+  svg += "</svg>";
+  server.send(200, "image/svg+xml", svg);
+}
+
+static void handleNotFound() {
+  if (server.method() == HTTP_PUT && server.uri().startsWith("/api/samples/")) {
+    handleUpdateSample();
+    return;
+  }
+  if (server.uri().startsWith("/api/")) {
+    server.send(404, "application/json", "{\"error\":\"not found\"}");
+    return;
+  }
+  handleStaticFiles();
+}
+
 static void startWebServer() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASS);
@@ -344,7 +752,16 @@ static void startWebServer() {
   server.on("/samples.csv", HTTP_POST, handlePostSamplesCsv);
   server.on("/api/status", HTTP_GET, handleStatus);
   server.on("/api/records", HTTP_GET, handleGetRecords);
-  server.onNotFound(handleStaticFiles);
+  server.on("/api/samples", HTTP_GET, handleGetSamples);
+  server.on("/api/samples/all", HTTP_DELETE, handleDeleteAllSamples);
+  server.on("/api/export/csv", HTTP_GET, handleExportCsv);
+  server.on("/api/export/json", HTTP_GET, handleExportJson);
+  server.on("/api/settings", HTTP_GET, handleGetSettings);
+  server.on("/api/settings", HTTP_POST, handlePostSettings);
+  server.on("/api/printer/test", HTTP_POST, handlePrinterTest);
+  server.on("/api/printer/print", HTTP_POST, handlePrinterPrint);
+  server.on("/api/qr", HTTP_GET, handleQrSvg);
+  server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("Web server started");
 }
@@ -390,6 +807,18 @@ static void onSampleButtonPressed(uint32_t nowMs) {
   printerModulePrintSnapshot(id, ts, lat, lon, tempC, hasFix, hasTemp);
 }
 
+static void triggerButtonAction(uint32_t nowMs) {
+  if (buttonClickCount == 1) {
+    Serial.println("Button single click: capture sample");
+    onSampleButtonPressed(nowMs);
+  } else if (buttonClickCount >= 2) {
+    Serial.println("Button double click: calibrate printer");
+    printerModuleCalibrate();
+  }
+  buttonClickCount = 0;
+  firstClickMs = 0;
+}
+
 static void handleButton(uint32_t nowMs) {
   if (nowMs - lastButtonSampleMs < SAMPLE_MS) {
     return;
@@ -408,11 +837,22 @@ static void handleButton(uint32_t nowMs) {
 
   if (buttonStable == HIGH && raw == LOW && buttonSameCount >= PRESS_STABLE_SAMPLES) {
     buttonStable = LOW;
-    onSampleButtonPressed(nowMs);
     return;
   }
   if (buttonStable == LOW && raw == HIGH && buttonSameCount >= RELEASE_STABLE_SAMPLES) {
     buttonStable = HIGH;
+    if (buttonClickCount == 0 || nowMs - firstClickMs > DOUBLE_CLICK_MS) {
+      buttonClickCount = 1;
+      firstClickMs = nowMs;
+    } else {
+      buttonClickCount++;
+      triggerButtonAction(nowMs);
+    }
+    return;
+  }
+
+  if (buttonStable == HIGH && buttonClickCount == 1 && nowMs - firstClickMs > DOUBLE_CLICK_MS) {
+    triggerButtonAction(nowMs);
   }
 }
 
@@ -487,12 +927,20 @@ static void readWaterTemp(uint32_t nowMs) {
   }
 
   lastTempMs = nowMs;
+  const int deviceCount = waterTemp.getDeviceCount();
+  Serial.printf("[TEMP] devices=%d sensorOk=%s failStreak=%u\n",
+                deviceCount,
+                tempSensorOk ? "true" : "false",
+                tempReadFailStreak);
+
   waterTemp.requestTemperatures();
   float t = waterTemp.getTempCByIndex(0);
+  Serial.printf("[TEMP] raw=%.4f disconnectedConst=%.4f\n", t, DEVICE_DISCONNECTED_C);
   if (t != DEVICE_DISCONNECTED_C && t > -55.0f && t < 125.0f) {
     lastTempC = t;
     tempSensorOk = true;
     tempReadFailStreak = 0;
+    Serial.printf("[TEMP] valid=true value=%.2fC\n", lastTempC);
   } else {
     if (tempReadFailStreak < 255) {
       tempReadFailStreak++;
@@ -500,6 +948,11 @@ static void readWaterTemp(uint32_t nowMs) {
     if (tempReadFailStreak >= 3) {
       tempSensorOk = false;
     }
+    Serial.printf("[TEMP] valid=false reason=%s failStreak=%u\n",
+                  (t == DEVICE_DISCONNECTED_C) ? "device_disconnected" :
+                  (t <= -55.0f) ? "too_low" :
+                  (t >= 125.0f) ? "too_high" : "unknown",
+                  tempReadFailStreak);
   }
 }
 
@@ -588,6 +1041,10 @@ void setup() {
 
   waterTemp.begin();
   tempSensorOk = (waterTemp.getDeviceCount() > 0);
+  Serial.printf("[TEMP] startup devices=%d sensorOk=%s pin=%d\n",
+                waterTemp.getDeviceCount(),
+                tempSensorOk ? "true" : "false",
+                WATER_TEMP_PIN);
   printerModuleInit();
   initSd();
   startWebServer();

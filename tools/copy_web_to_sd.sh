@@ -13,6 +13,7 @@ if [[ ! -d "$SD_PATH" ]]; then
 fi
 
 mkdir -p "$SD_PATH/www"
-cp -f data/www/index.html data/www/styles.css data/www/app.js "$SD_PATH/www/"
+find "$SD_PATH/www" -mindepth 1 -maxdepth 1 -type f -delete
+cp -rf data/www/. "$SD_PATH/www/"
 
 echo "Copied web UI to $SD_PATH/www"

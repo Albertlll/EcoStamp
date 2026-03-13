@@ -12,5 +12,6 @@ bool printerModulePrintSnapshot(
     float tempC,
     bool hasFix,
     bool hasTemp);
+bool printerModuleCalibrate();
 bool printerModuleIsBusy();
 void printerModuleTick();
